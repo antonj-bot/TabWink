@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from search import search_documents
+from ai import ask_ai
 
 app = FastAPI()
 
@@ -13,3 +14,30 @@ def search(q: str):
         "count": len(results),
         "results": results
     }
+
+@app.get("/ask")
+def ask(question: str):
+
+    results = search_documents(question)
+    
+    print("TOP RESULT:", results[0]["file"])
+
+    if not results:
+        return {
+            "answer": "I could not find anything in the SOPs."
+        }
+
+    context = results[0]["text"]
+    
+
+    answer = ask_ai(
+        question,
+        context
+    )
+
+    return {
+        "answer": answer,
+        "source": results[0]["file"]
+    }
+
+
