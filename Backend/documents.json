@@ -1,0 +1,12 @@
+[
+  {
+    "file": "Lousiana SOPs.pdf",
+    "page": 1,
+    "text": "LA SOPs  \nNaming Convention:  \nIf name is \u201cHispanic\u201d , follow 1 0 2 format \n  \nAirbag: \n 5 = None \n 4 = Not Deployed  \n3 = Deployed Front  \n2 = Deployed Side  \n1 = Deployed Front and side  \n0 = Unknown "
+  },
+  {
+    "file": "North Carolina SOPs.pdf",
+    "page": 1,
+    "text": "North Carolina SOPs \n \nNaming Convention: \n \nIf name is \u201cHispanic\u201d, follow 1 0 2 format \n \nAirbag: \n \n0 = None \n1 = Not Deployed \n2 = Deployed Front \n3 = Deployed Side \n4 = Deployed Front and side \n5 = Unknown "
+  }
+]
