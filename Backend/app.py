@@ -19,8 +19,6 @@ def search(q: str):
 def ask(question: str):
 
     results = search_documents(question)
-    
-    print("TOP RESULT:", results[0]["file"])
 
     if not results:
         return {
@@ -28,7 +26,7 @@ def ask(question: str):
         }
 
     context = results[0]["text"]
-    
+    print("TOP RESULT:", results[0]["file"])
 
     answer = ask_ai(
         question,
@@ -37,7 +35,8 @@ def ask(question: str):
 
     return {
         "answer": answer,
-        "source": results[0]["file"]
+        "source": results[0]["file"],
+        "page": results[0]["page"]
     }
 
 
