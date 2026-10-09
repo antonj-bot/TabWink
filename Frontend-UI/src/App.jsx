@@ -31,6 +31,10 @@ function formatVinReply(data){
     const correction=data.detected_vin&&data.detected_vin!==vehicle.vin?`The image read ${data.detected_vin}; corrected to ${vehicle.vin}. `:''
     return `${correction}${vehicle.year||'Year unknown'} ${vehicle.make} ${vehicle.model} (VIN: ${vehicle.vin}).`
   }
+  if(data.closest_matches?.length>1){
+    const matches=data.closest_matches.map(match=>`${match.suggested_vin} (${match.year||'Year unknown'} ${match.make} ${match.model})`)
+    return `I couldn't confirm ${data.detected_vin||'that VIN'}. Closest NHTSA matches: ${matches.join('; ')}. Compare these with the VIN on the vehicle.`
+  }
   if(data.did_you_mean){
     const suggestion=data.did_you_mean
     return `I couldn't confirm ${data.detected_vin||'the VIN'}. Did you mean ${suggestion.suggested_vin} (${suggestion.year} ${suggestion.make} ${suggestion.model})?`
@@ -99,13 +103,24 @@ export default function App(){
     setError('')
   }
 
+  function pasteScreenshot(event){
+    const imageItem=[...event.clipboardData.items].find(item=>item.kind==='file'&&item.type.startsWith('image/'))
+    const image=imageItem?.getAsFile()
+    if(!image)return
+
+    event.preventDefault()
+    const extension=image.type.split('/')[1]?.replace('jpeg','jpg')||'png'
+    setFile(new File([image],`pasted-screenshot.${extension}`,{type:image.type}))
+    setError('')
+  }
+
   async function send(value=text){
     const question=value.trim()
     const attachment=file
     if(attachment&&!attachment.type.startsWith('image/')){setError('Upload an image of the VIN label.');return}
     if((!question&&!attachment)||loading)return
     const conversationId=activeConversation?.id||`${Date.now()}-${Math.random().toString(36).slice(2)}`
-    const isTypedVin=!attachment&&/^[a-z0-9]{17}$/i.test(question)
+    const isTypedVin=!attachment&&question.replace(/[^a-z0-9]/gi,'').length===17
     const isVinRequest=Boolean(attachment)||isTypedVin
     setError('')
     recordMessage(conversationId,{role:'user',text:question||'Decode the VIN in this image.',file:attachment?.name},true)
@@ -163,7 +178,7 @@ export default function App(){
       <footer>
         {file&&<div className="file-preview"><ImageIcon/><div><b>{file.name}</b><span>{Math.ceil(file.size/1024)} KB</span></div><button onClick={()=>setFile(null)}><X/></button></div>}
         {error&&<div className="request-error" role="alert">{error}</div>}
-        <div className="composer"><button onClick={()=>inputRef.current?.click()} title="Upload VIN photo"><Paperclip/></button><input ref={inputRef} hidden type="file" accept="image/*" onChange={e=>{setFile(e.target.files?.[0]||null);setError('')}}/><textarea rows="1" placeholder="Ask TabWink about an SOP or enter a VIN..." value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}}/><button className="send" onClick={()=>send()} disabled={loading||(!text.trim()&&!file)}><Send/></button></div>
+        <div className="composer"><button onClick={()=>inputRef.current?.click()} title="Upload a VIN photo or paste a screenshot"><Paperclip/></button><input ref={inputRef} hidden type="file" accept="image/*" onChange={e=>{setFile(e.target.files?.[0]||null);setError('')}}/><textarea rows="1" placeholder="Ask about an SOP, enter a VIN, or paste a screenshot..." value={text} onChange={e=>setText(e.target.value)} onPaste={pasteScreenshot} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}}/><button className="send" onClick={()=>send()} disabled={loading||(!text.trim()&&!file)}><Send/></button></div>
         <small>TabWink can make mistakes. Verify important answers against the cited SOP.</small>
       </footer>
     </main>

@@ -1,4 +1,5 @@
 from io import BytesIO
+from itertools import combinations
 import re
 
 import pytesseract
@@ -13,6 +14,14 @@ from ai import ask_ai
 app = FastAPI()
 
 VIN_PATTERN = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
+VIN_CHARACTERS = "0123456789ABCDEFGHJKLMNPRSTUVWXYZ"
+VIN_WEIGHTS = (8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2)
+VIN_TRANSLITERATION = {
+    "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7,
+    "H": 8, "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7,
+    "R": 9, "S": 2, "T": 3, "U": 4, "V": 5, "W": 6, "X": 7,
+    "Y": 8, "Z": 9
+}
 OCR_CORRECTIONS = {
     "O": "0",
     "I": "1",
@@ -22,20 +31,43 @@ OCR_CORRECTIONS = {
     "Q": "0"
 }
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+MAX_VIN_CANDIDATES = 50
+MAX_VIN_MATCHES = 10
 
 
 def is_valid_vin(vin: str) -> bool:
-    return bool(VIN_PATTERN.fullmatch(vin.upper()))
+    vin = vin.upper()
+    return (
+        bool(VIN_PATTERN.fullmatch(vin))
+        and calculate_vin_check_digit(vin) == vin[8]
+    )
 
 
-def decode_vin_data(vin: str):
+def calculate_vin_check_digit(vin: str):
+    if len(vin) != 17:
+        return None
+
+    total = 0
+    for position, character in enumerate(vin):
+        if position == 8:
+            continue
+        value = int(character) if character.isdigit() else VIN_TRANSLITERATION.get(character)
+        if value is None:
+            return None
+        total += value * VIN_WEIGHTS[position]
+
+    remainder = total % 11
+    return "X" if remainder == 10 else str(remainder)
+
+
+def decode_vin_data(vin: str, timeout: float = 10):
     url = (
         "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/"
         f"{vin}?format=json"
     )
 
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=timeout)
         response.raise_for_status()
         result = response.json()["Results"][0]
     except (requests.RequestException, KeyError, IndexError, ValueError) as exc:
@@ -44,7 +76,11 @@ def decode_vin_data(vin: str):
             detail="The NHTSA VIN decoding service is unavailable."
         ) from exc
 
-    if not result.get("Make") or not result.get("Model"):
+    if (
+        str(result.get("ErrorCode", "")) != "0"
+        or not result.get("Make")
+        or not result.get("Model")
+    ):
         return None
 
     return {
@@ -56,29 +92,98 @@ def decode_vin_data(vin: str):
 
 
 def generate_candidates(vin: str):
+    normalized = re.sub(r"[^A-Z0-9]", "", vin.upper())
+    if not re.fullmatch(r"[A-Z0-9]{17}", normalized):
+        return []
+
     candidates = []
+    position_candidates = {position: [] for position in range(17)}
+    seen = {normalized}
 
-    for incorrect, corrected in OCR_CORRECTIONS.items():
-        if incorrect in vin:
-            candidate = vin.replace(incorrect, corrected)
-            if is_valid_vin(candidate) and candidate not in candidates:
-                candidates.append(candidate)
+    def add_candidate(candidate: str):
+        if is_valid_vin(candidate) and candidate not in seen:
+            seen.add(candidate)
+            candidates.append(candidate)
 
-    return candidates
+    corrections = []
+    for position, character in enumerate(normalized):
+        corrected = OCR_CORRECTIONS.get(character)
+        if corrected:
+            candidate = normalized[:position] + corrected + normalized[position + 1:]
+            add_candidate(candidate)
+            corrections.append((position, corrected))
+
+    check_digit = calculate_vin_check_digit(normalized)
+    if check_digit:
+        add_candidate(normalized[:8] + check_digit + normalized[9:])
+
+    for position in range(17):
+        if position == 8:
+            continue
+        for replacement in VIN_CHARACTERS:
+            if replacement == normalized[position]:
+                continue
+            candidate = normalized[:position] + replacement + normalized[position + 1:]
+            if calculate_vin_check_digit(candidate) == candidate[8]:
+                if is_valid_vin(candidate) and candidate not in seen:
+                    seen.add(candidate)
+                    position_candidates[position].append(candidate)
+
+    for candidate_index in range(max(map(len, position_candidates.values()))):
+        for position in range(17):
+            position_options = position_candidates[position]
+            if candidate_index < len(position_options):
+                candidates.append(position_options[candidate_index])
+
+    for (first_position, first_replacement), (second_position, second_replacement) in combinations(corrections, 2):
+        candidate = list(normalized)
+        candidate[first_position] = first_replacement
+        candidate[second_position] = second_replacement
+        add_candidate("".join(candidate))
+
+    return candidates[:MAX_VIN_CANDIDATES]
 
 
 def try_candidates(candidates):
-    for candidate in candidates:
-        vehicle = decode_vin_data(candidate)
-        if vehicle:
-            return {
-                "suggested_vin": vehicle["vin"],
-                "year": vehicle["year"],
-                "make": vehicle["make"],
-                "model": vehicle["model"]
-            }
+    candidates = candidates[:MAX_VIN_CANDIDATES]
+    if not candidates:
+        return []
 
-    return None
+    try:
+        response = requests.post(
+            "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
+            data={"data": ";".join(candidates) + ";", "format": "json"},
+            timeout=10
+        )
+        response.raise_for_status()
+        results = response.json()["Results"]
+    except (requests.RequestException, KeyError, IndexError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="The NHTSA VIN decoding service is unavailable."
+        ) from exc
+
+    matches = []
+    seen_vins = set()
+    for result in results:
+        if (
+            str(result.get("ErrorCode", "")) == "0"
+            and result.get("Make")
+            and result.get("Model")
+        ):
+            candidate = {
+                "suggested_vin": result["VIN"],
+                "year": result.get("ModelYear"),
+                "make": result["Make"],
+                "model": result["Model"]
+            }
+            if candidate["suggested_vin"] not in seen_vins:
+                matches.append(candidate)
+                seen_vins.add(candidate["suggested_vin"])
+            if len(matches) == MAX_VIN_MATCHES:
+                break
+
+    return matches
 
 
 def find_possible_vins(text: str):
@@ -138,16 +243,17 @@ def ask(question: str):
 def decode_vin(vin: str):
     vin = vin.strip().upper()
 
-    if not is_valid_vin(vin):
-        return {"error": "Invalid VIN"}
+    if is_valid_vin(vin):
+        vehicle = decode_vin_data(vin)
+        if vehicle:
+            return vehicle
 
-    vehicle = decode_vin_data(vin)
-    if vehicle:
-        return vehicle
+    suggestions = try_candidates(generate_candidates(vin))
 
     return {
-        "error": "VIN could not be decoded",
-        "did_you_mean": try_candidates(generate_candidates(vin))
+        "error": "VIN could not be decoded" if is_valid_vin(vin) else "Invalid VIN",
+        "did_you_mean": suggestions[0] if suggestions else None,
+        "closest_matches": suggestions
     }
 
 
@@ -182,7 +288,8 @@ async def ocr_image(file: UploadFile = File(...)):
             "detected_vin": None,
             "decoded": False,
             "vehicle": None,
-            "did_you_mean": None
+            "did_you_mean": None,
+            "closest_matches": []
         }
 
     detected_vin = possible_vins[0]
@@ -198,14 +305,15 @@ async def ocr_image(file: UploadFile = File(...)):
                     "did_you_mean": None
                 }
 
-        suggestion = try_candidates(generate_candidates(candidate))
-        if suggestion:
+        suggestions = try_candidates(generate_candidates(candidate))
+        if suggestions:
             return {
                 "ocr_text": ocr_text,
                 "detected_vin": detected_vin,
                 "decoded": False,
                 "vehicle": None,
-                "did_you_mean": suggestion
+            "did_you_mean": suggestions[0],
+            "closest_matches": suggestions
             }
 
     return {
@@ -213,7 +321,8 @@ async def ocr_image(file: UploadFile = File(...)):
         "detected_vin": detected_vin if is_valid_vin(detected_vin) else None,
         "decoded": False,
         "vehicle": None,
-        "did_you_mean": None
+        "did_you_mean": None,
+        "closest_matches": []
     }
 
 
