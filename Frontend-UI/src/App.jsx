@@ -144,7 +144,7 @@ export default function App(){
       const data=await response.json()
       if(!response.ok)throw new Error(data.detail||`Request failed (${response.status}).`)
 
-      recordMessage(conversationId,{role:'bot',text:isVinRequest?formatVinReply(data):data.answer||'The backend returned an empty answer.',sources:!isVinRequest&&data.source?[{name:data.source,page:data.page?`Page ${data.page}`:''}]:[]})
+      recordMessage(conversationId,{role:'bot',text:isVinRequest?formatVinReply(data):data.answer||'The backend returned an empty answer.',sources:!isVinRequest&&data.source?[{name:data.source,page:data.page_title|| (data.page?`Page ${data.page}`:'')}]:[]})
     }catch(requestError){
       const message=requestError instanceof Error?requestError.message:'Unexpected request error.'
       recordMessage(conversationId,{role:'bot',text:`I could not process that request: ${message}`})

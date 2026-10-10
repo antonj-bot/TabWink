@@ -1,17 +1,30 @@
 from io import BytesIO
 from itertools import combinations
+import os
 import re
+import sys
+from pathlib import Path
 
 import pytesseract
 import requests
 from fastapi import FastAPI
 from fastapi import File, HTTPException, UploadFile
 from PIL import Image, UnidentifiedImageError
+from fastapi.staticfiles import StaticFiles
 
-from search import search_documents
-from ai import ask_ai
+from search import answer_question, search_documents
 
 app = FastAPI()
+APP_ROOT = (
+    Path(sys._MEIPASS)
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parent.parent
+)
+STATIC_DIR = APP_ROOT / "Frontend-UI" / "dist"
+BUNDLED_TESSERACT = APP_ROOT / "tesseract" / "tesseract.exe"
+if BUNDLED_TESSERACT.is_file():
+    pytesseract.pytesseract.tesseract_cmd = str(BUNDLED_TESSERACT)
+    os.environ["TESSDATA_PREFIX"] = str(BUNDLED_TESSERACT.parent / "tessdata")
 
 VIN_PATTERN = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
 VIN_CHARACTERS = "0123456789ABCDEFGHJKLMNPRSTUVWXYZ"
@@ -216,27 +229,7 @@ def search(q: str):
 
 @app.get("/ask")
 def ask(question: str):
-
-    results = search_documents(question)
-
-    if not results:
-        return {
-            "answer": "I could not find anything in the SOPs."
-        }
-
-    context = results[0]["text"]
-    print("TOP RESULT:", results[0]["file"])
-
-    answer = ask_ai(
-        question,
-        context
-    )
-
-    return {
-        "answer": answer,
-        "source": results[0]["file"],
-        "page": results[0]["page"]
-    }
+    return answer_question(question)
 
 
 @app.get("/vin/{vin}")
@@ -324,5 +317,9 @@ async def ocr_image(file: UploadFile = File(...)):
         "did_you_mean": None,
         "closest_matches": []
     }
+
+
+if STATIC_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="frontend")
 
 
