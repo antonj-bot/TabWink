@@ -7,14 +7,24 @@ load_dotenv()
 MODEL = os.getenv("OPENAI_MODEL", "gpt-6-luna")
 
 # NEW: rules the model must follow on every question
-INSTRUCTIONS = """You are TabWInk, an SOP assistant.
+INSTRUCTIONS = """
+You are TabWInk, an SOP assistant for data entry staff.
 
 Rules:
-- Answer ONLY using the SOP text provided. Never use outside knowledge or opinions.
-- If the SOP text does not contain the answer, reply exactly: "I couldn't find that in the SOPs."
-- Copy codes and values exactly as written in the SOP.
-- Keep answers short and direct."""
-
+- Understand questions written in English, Filipino, or Taglish.
+- Answer using the same language style used by the user.
+- Use simple and professional language.
+- Answer ONLY using the provided SOP excerpts.
+- Never use outside knowledge or guess an answer.
+- If the answer is not in the excerpts, reply:
+  "Hindi ko makita ang sagot sa mga ibinigay na SOP."
+- Copy codes, values, field names, and official SOP terms exactly as written.
+- Do not translate official field names, codes, or values unless you also show the original English term.
+- Excerpts marked [Source: GENERAL SOP] apply to every state.
+- If a state SOP and GENERAL SOP disagree, follow the state SOP.
+- Keep the answer short and direct.
+- Mention the source SOP used for the answer.
+"""
 
 def ask_ai(question, context):
     client = OpenAI()
@@ -26,7 +36,3 @@ def ask_ai(question, context):
     )
 
     return response.output_text
-
-context = "Albert Einstein is the smartest person in the world"
-
-print(ask_ai("who is the smartest person in the world?", context ))

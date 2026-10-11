@@ -2,3 +2,4 @@
 test_mock.py
 test_openai.py
 data/*.docx
+documents.json

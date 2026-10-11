@@ -12,9 +12,24 @@ from fastapi import File, HTTPException, UploadFile
 from PIL import Image, UnidentifiedImageError
 from fastapi.staticfiles import StaticFiles
 
+from loader import load_documents
+from retriever import find_context
+from ai import ask_ai
+
 from search import answer_question, search_documents
 
+import html
+from urllib.parse import quote
+
+from fastapi.responses import HTMLResponse
+
 app = FastAPI()
+
+DOCUMENTS = load_documents()
+
+print(f"Loaded {len(DOCUMENTS)} SOP files")
+
+
 APP_ROOT = (
     Path(sys._MEIPASS)
     if getattr(sys, "frozen", False)
@@ -229,8 +244,148 @@ def search(q: str):
 
 @app.get("/ask")
 def ask(question: str):
-    return answer_question(question)
+    question = question.strip()
 
+    if not question:
+        raise HTTPException(
+            status_code=400,
+            detail="Question cannot be empty."
+        )
+
+    context, sources = find_context(
+        question=question,
+        documents=DOCUMENTS
+    )
+
+    if not context:
+        return {
+            "answer": "I couldn't find that in the SOPs.",
+            "sources": [],
+            "resources": []
+        }
+
+    try:
+        answer = ask_ai(
+            question=question,
+            context=context
+        )
+    except Exception as exc:
+        print(f"OpenAI error: {exc}")
+
+        raise HTTPException(
+            status_code=502,
+            detail="The AI service is currently unavailable."
+        ) from exc
+
+    resources = [
+        {
+            "name": source,
+            "url": f"/sources/{quote(source, safe='')}"
+        }
+        for source in sources
+    ]
+
+    return {
+        "answer": answer,
+        "sources": sources,
+        "resources": resources
+    }
+    
+
+@app.get(
+    "/sources/{source_name}",
+    response_class=HTMLResponse
+)
+def view_source(source_name: str):
+    source_document = next(
+        (
+            document
+            for document in DOCUMENTS
+            if document["source"] == source_name
+        ),
+        None
+    )
+
+    if source_document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="SOP source not found."
+        )
+
+    safe_source = html.escape(source_document["source"])
+    safe_text = html.escape(source_document["text"])
+
+    return HTMLResponse(
+        content=f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta
+                name="viewport"
+                content="width=device-width, initial-scale=1"
+            >
+            <title>{safe_source}</title>
+
+            <style>
+                body {{
+                    margin: 0;
+                    background: #f4f6fb;
+                    color: #1f2937;
+                    font-family: "Segoe UI", Arial, sans-serif;
+                }}
+
+                .container {{
+                    max-width: 950px;
+                    margin: 32px auto;
+                    padding: 0 20px;
+                }}
+
+                .document {{
+                    background: white;
+                    border-radius: 12px;
+                    padding: 32px;
+                    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+                }}
+
+                h1 {{
+                    margin-top: 0;
+                    color: #3730a3;
+                    font-size: 26px;
+                }}
+
+                .source-label {{
+                    color: #6b7280;
+                    margin-bottom: 24px;
+                }}
+
+                pre {{
+                    white-space: pre-wrap;
+                    overflow-wrap: anywhere;
+                    font-family: "Segoe UI", Arial, sans-serif;
+                    font-size: 15px;
+                    line-height: 1.65;
+                    margin: 0;
+                }}
+            </style>
+        </head>
+
+        <body>
+            <main class="container">
+                <article class="document">
+                    <h1>{safe_source}</h1>
+
+                    <div class="source-label">
+                        TabWInk SOP Resource
+                    </div>
+
+                    <pre>{safe_text}</pre>
+                </article>
+            </main>
+        </body>
+        </html>
+        """
+    )
 
 @app.get("/vin/{vin}")
 def decode_vin(vin: str):
