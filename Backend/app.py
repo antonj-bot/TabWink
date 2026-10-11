@@ -16,7 +16,6 @@ from loader import load_documents
 from retriever import find_context
 from ai import ask_ai
 
-from search import answer_question, search_documents
 
 import html
 from urllib.parse import quote
@@ -231,16 +230,6 @@ def find_possible_vins(text: str):
 
     return possible_vins
 
-
-@app.get("/search")
-def search(q: str):
-
-    results = search_documents(q)
-
-    return {
-        "count": len(results),
-        "results": results
-    }
 
 @app.get("/ask")
 def ask(question: str):
