@@ -15,6 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from loader import load_documents
 from retriever import find_context
 from ai import ask_ai
+from feedback import router as feedback_router
+from feedback import create_feedback_table
 
 
 import html
@@ -23,6 +25,8 @@ from urllib.parse import quote
 from fastapi.responses import HTMLResponse
 
 app = FastAPI()
+create_feedback_table()
+app.include_router(feedback_router)
 
 DOCUMENTS = load_documents()
 

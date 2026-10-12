@@ -3,3 +3,5 @@ test_mock.py
 test_openai.py
 data/*.docx
 documents.json
+tabwink_feedback.db
+tabwink_feedback.db-journal
